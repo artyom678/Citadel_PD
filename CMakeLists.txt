@@ -18,3 +18,5 @@ target_include_directories(system_monitor PRIVATE
 	${CMAKE_SOURCE_DIR}/include 
 	${CMAKE_SOURCE_DIR}/include/ThreadPool
 )
+
+target_link_libraries(system_monitor PRIVATE pthread)
