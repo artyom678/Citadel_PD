@@ -1,7 +1,6 @@
 #include "system_monitor.hpp"
 #include "config.hpp"
 #include "metrics.hpp"
-#include <ctime>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -229,10 +228,6 @@ void SystemMonitor::output_metrics(const std::vector<std::unique_ptr<Metric>>& m
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
     std::string timestamp = oss.str();
-
-    std::vector<std::future<void>> output_futures;
-
-    auto start = std::chrono::high_resolution_clock::now();
 
     for (const auto& output : outputs) {
 
