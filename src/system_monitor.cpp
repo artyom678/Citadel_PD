@@ -1,6 +1,7 @@
 #include "system_monitor.hpp"
 #include "config.hpp"
 #include "metrics.hpp"
+#include <ctime>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -15,6 +16,7 @@ SystemMonitor::SystemMonitor(const Config& config)
     : period(config.get_period())
     , metrics_config(config.get_metrics())
     , outputs(config.get_outputs())
+    , pool(std::min(metrics_config.size(), static_cast<std::size_t>(std::thread::hardware_concurrency())))
 {
 	config.setup_logging(log_file);
 }
@@ -166,10 +168,10 @@ std::vector<std::unique_ptr<Metric>> SystemMonitor::collect_memory_metrics(const
 
 	for(const auto& spec : specs) {
 		if (spec == "used") {
-			mem_metrics.emplace_back(new MemoryMetric(spec, mem_total - mem_available)); // to do: add a custom allocator (stack or linear would be enough)
+			mem_metrics.emplace_back(new MemoryMetric(spec, mem_total - mem_available));
 		}
 		else if (spec == "free") {
-			mem_metrics.emplace_back(new MemoryMetric(spec, mem_free)); // new...
+			mem_metrics.emplace_back(new MemoryMetric(spec, mem_free)); 
 		}
 	}
 
@@ -182,26 +184,37 @@ std::vector<std::unique_ptr<Metric>> SystemMonitor::collect_metrics() const {
 
 	std::vector<std::unique_ptr<Metric>> collected_metrics;
 
-	for (json metric : metrics_config) {
+	std::vector<std::future<std::vector<std::unique_ptr<Metric>>>> future_metrics;
+
+	for (const auto& metric : metrics_config) {
 		
 		if (metric["type"] == "cpu") {
 			
-			auto cpu_metrics = collect_cpu_metrics(metric);
-			
-			collected_metrics.insert(collected_metrics.end()
-				, std::make_move_iterator(cpu_metrics.begin())
-				, std::make_move_iterator(cpu_metrics.end())
-				);
+			future_metrics.emplace_back(pool.submit(&SystemMonitor::collect_cpu_metrics, this, std::cref(metric)));
+
 		}
 		else if (metric["type"] == "memory") {
-			
-			auto memory_metrics = collect_memory_metrics(metric);
 
-			collected_metrics.insert(collected_metrics.end()
-				, std::make_move_iterator(memory_metrics.begin())
-				, std::make_move_iterator(memory_metrics.end())
-				);
+			future_metrics.emplace_back(pool.submit(&SystemMonitor::collect_memory_metrics, this, std::cref(metric)));
 		}
+	}
+
+
+	for(auto& fm : future_metrics) {
+		
+		std::vector<std::unique_ptr<Metric>> some_metrics;
+		try {
+			some_metrics = fm.get();
+		}
+		catch(const std::exception& ex) {
+
+			throw std::runtime_error("Failed to collect metrics : " + std::string(ex.what()));
+		} 
+		
+		collected_metrics.insert(collected_metrics.end()
+			, std::make_move_iterator(some_metrics.begin())
+			, std::make_move_iterator(some_metrics.end())
+			);
 	}
 
 	return collected_metrics;
@@ -217,15 +230,21 @@ void SystemMonitor::output_metrics(const std::vector<std::unique_ptr<Metric>>& m
     oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
     std::string timestamp = oss.str();
 
-    std::vector<std::string> console_strings;
-    console_strings.reserve(metrics.size());
-    for (const auto& metric : metrics) {
-        console_strings.push_back(metric->to_string());
-    }
-    std::string console_output = "Metrics at " + timestamp + ": " + join(console_strings, "; ");
+    std::vector<std::future<void>> output_futures;
+
+    auto start = std::chrono::high_resolution_clock::now();
 
     for (const auto& output : outputs) {
+
         if (output["type"] == "console") {
+
+        	std::vector<std::string> console_strings;
+		    console_strings.reserve(metrics.size());
+		    
+		    for (const auto& metric : metrics) {
+		        console_strings.push_back(metric->to_string());
+		    }
+		    std::string console_output = "Metrics at " + timestamp + ": " + join(console_strings, "; ");
 
             std::cout << console_output << std::endl;
         
@@ -244,7 +263,9 @@ void SystemMonitor::output_metrics(const std::vector<std::unique_ptr<Metric>>& m
             log_file << log_entry.dump(2) << std::endl;
             log_file.flush();
         }
+
     }
+
 }
 
 
