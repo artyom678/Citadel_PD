@@ -2,7 +2,6 @@
 
 #include <functional>
 #include <memory>
-#include <type_traits>
 
 template<typename Ret, typename... Args>
 class function_wrapper;
@@ -25,7 +24,7 @@ class function_wrapper<Ret(Args...)> {
 
 
 		DerivedFunc(F&& f) 
-			: f(std::forward<F>(f)) 
+			: f(std::move(f)) 
 		{}
 
 
@@ -44,8 +43,8 @@ public:
 	function_wrapper() = default;
 
 	template<typename F>
-	function_wrapper(F&& f) 
-		: func_ptr(new DerivedFunc<std::decay_t<F>>(std::forward<F>(f)))
+	function_wrapper(F f) 
+		: func_ptr(new DerivedFunc(std::move(f)))
 	{}
 
 	function_wrapper(function_wrapper&& other) noexcept
@@ -63,8 +62,10 @@ public:
 	}
 
 	template<typename F>
-	function_wrapper& operator=(F&& f) & {
-		func_ptr = std::make_unique<DerivedFunc<std::decay_t<F>>>(std::forward<F>(f));
+	function_wrapper& operator=(F f) & {
+		
+		func_ptr.reset(new DerivedFunc(std::move(f)));
+		return *this;
 	}
 
 
